@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>จิ๊กซอว์ความทรงจำ 3 ด่าน</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#101a1a;--ink:#e6efed;--muted:#93aaa7;--felt:#1c393b;--panel:#1a2b2b;--accent:#e3b23c;--accent-ink:#2a2008;--line:#2d4443}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{margin:0;background:var(--bg);color:var(--ink);font-family:"Noto Sans Thai",sans-serif;line-height:1.6}
+main{max-width:1000px;margin:0 auto;padding:16px 16px 32px}
+h1{font-size:clamp(24px,4vw,32px);font-weight:800;margin:0 0 4px;text-align:center}
+.sub{margin:0 0 16px;color:var(--muted);text-align:center;font-size:14px}
+.bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px;background:var(--panel);padding:10px 16px;border-radius:12px;border:1px solid var(--line)}
+.badge{background:var(--accent);color:var(--accent-ink);padding:4px 10px;border-radius:20px;font-weight:700;font-size:14px}
+button{font:inherit;font-size:14px;padding:6px 12px;border-radius:8px;border:1px solid var(--line);background:var(--felt);color:var(--ink);cursor:pointer}
+button.main{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:600}
+.stat{margin-left:auto;font-variant-numeric:tabular-nums;color:var(--muted);font-size:14px}
+#table{position:relative;width:100%;background:var(--felt);border-radius:16px;overflow:hidden;border:1px solid var(--line)}
+#board{position:absolute;border:2px dashed rgba(255,255,255,.3);border-radius:4px;z-index:0}
+#board::before{content:"";position:absolute;inset:0;background:var(--img) center/100% 100%;opacity:0;transition:opacity .2s}
+#board.peek::before{opacity:.5}
+.pc{position:absolute;touch-action:none;cursor:grab;filter:drop-shadow(0 2px 4px rgba(0,0,0,.5));user-select:none;-webkit-user-select:none}
+.pc.lift{cursor:grabbing;filter:drop-shadow(0 8px 12px rgba(0,0,0,.6));z-index:999!important}
+.pc.ok{pointer-events:none;filter:none;z-index:1}
+#win{position:fixed;inset:0;background:rgba(0,0,0,.75);display:grid;place-items:center;z-index:9999;padding:16px}
+#win div{background:var(--panel);color:var(--ink);padding:28px 32px;border-radius:16px;text-align:center;max-width:360px;border:1px solid var(--line)}
+#win h2{margin:0 0 8px;font-size:24px;color:var(--accent)}
+#win p{margin:0 0 16px;color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+<h1>🧩 เกมจิ๊กซอว์ความทรงจำ</h1>
+<p class="sub">ผ่านไปทีละด่านเพื่อปลดล็อกรูปถัดไป</p>
+<div class="bar">
+  <span class="badge" id="stg-badge">ด่านที่ 1/3 (24 ชิ้น)</span>
+  <button id="shuf">สับใหม่</button>
+  <button id="pv">ดูภาพตัวอย่าง</button>
+  <span class="stat"><span id="cnt">0/0</span> · <span id="time">00:00</span></span>
+</div>
+<div id="table"><div id="board"></div></div>
+</main>
+
+<div id="win" hidden>
+  <div>
+    <h2 id="win-title">🎉 ผ่านด่านแล้ว!</h2>
+    <p id="wt"></p>
+    <button class="main" id="again">ไปด่านถัดไป ➔</button>
+  </div>
+</div>
+
+<script>
+const $=s=>document.querySelector(s);
+// กำหนด 3 ด่าน (รูปภาพ + จำนวนชิ้น)
+const STAGES = [
+  { img: 'img1.jpg', pcs: 24, cols: 6, rows: 4, name: 'ด่านที่ 1/3 (24 ชิ้น)' },
+  { img: 'img2.jpg', pcs: 48, cols: 8, rows: 6, name: 'ด่านที่ 2/3 (48 ชิ้น)' },
+  { img: 'img3.jpg', pcs: 80, cols: 10, rows: 8, name: 'ด่านที่ 3/3 (80 ชิ้น)' }
+];
+let curStg = 0, src, imgURL, cols, rows, W, H, pw, ph, pad, bx, by, TW, TH, total, placed, t0, timer, z=10, drag=null, ox=0, oy=0, dpr=Math.min(window.devicePixelRatio||1,2);
+const table=$('#table'), board=$('#board');
+
+function setSource(img){
+  const a=Math.min(1.8,Math.max(.75,img.width/img.height));
+  let sw=img.width,sh=img.height;
+  if(sw/sh>a)sw=sh*a;else sh=sw/a;
+  const c=document.createElement('canvas');c.width=1200;c.height=Math.round(1200/a);
+  c.getContext('2d').drawImage(img,(img.width-sw)/2,(img.height-sh)/2,sw,sh,0,0,c.width,c.height);
+  src=c;
+}
+
+function edge(p,x0,y0,x1,y1,s){
+  if(!s){p.lineTo(x1,y1);return}
+  const dx=x1-x0,dy=y1-y0,nx=dy*s,ny=-dx*s;
+  const P=(t,h)=>[x0+dx*t+nx*h,y0+dy*t+ny*h];
+  p.lineTo(...P(.4,0));
+  p.bezierCurveTo(...P(.4,.08),...P(.3,.1),...P(.3,.18),...P(.3,.27),...P(.42,.3),...P(.5,.3));
+  p.bezierCurveTo(...P(.58,.3),...P(.7,.27),...P(.7,.18),...P(.7,.1),...P(.6,.08),...P(.6,0));
+  p.lineTo(x1,y1);
+}
+
+function makePiece(c,r,Hs,Vs){
+  const w=pw+2*pad,h=ph+2*pad;
+  const cv=document.createElement('canvas');
+  cv.width=Math.ceil(w*dpr);cv.height=Math.ceil(h*dpr);
+  cv.style.width=w+'px';cv.style.height=h+'px';
+  const g=cv.getContext('2d');g.scale(dpr,dpr);
+  const top=r>0?-Hs[r][c]:0,right=c<cols-1?Vs[r][c+1]:0,bottom=r<rows-1?Hs[r+1][c]:0,left=c>0?-Vs[r][c]:0;
+  const p=new Path2D(),x=pad,y=pad;
+  p.moveTo(x,y);
+  edge(p,x,y,x+pw,y,top);
+  edge(p,x+pw,y,x+pw,y+ph,right);
+  edge(p,x+pw,y+ph,x,y+ph,bottom);
+  edge(p,x,y+ph,x,y,left);
+  p.closePath();
+  g.save();g.clip(p);
+  g.drawImage(src,pad-c*pw,pad-r*ph,W,H);
+  g.lineWidth=3;g.strokeStyle='rgba(255,255,255,.3)';g.stroke(p);
+  g.restore();
+  g.lineWidth=1;g.strokeStyle='rgba(0,0,0,.6)';g.stroke(p);
+  cv.className='pc';cv._g=g;cv._p=p;cv._c=c;cv._r=r;
+  return cv;
+}
+
+function build(){
+  clearInterval(timer);
+  table.querySelectorAll('.pc').forEach(e=>e.remove());
+  $('#win').hidden=true;
+  const stg = STAGES[curStg];
+  cols = stg.cols; rows = stg.rows;
+  $('#stg-badge').textContent = stg.name;
+  
+  const a=src.width/src.height;
+  TW=table.clientWidth;
+  W=Math.floor(Math.min(TW*.9,720,window.innerHeight*.5*a));H=Math.floor(W/a);
+  pw=W/cols;ph=H/rows;pad=Math.round(.32*Math.max(pw,ph));
+  const size=Math.max(pw,ph)+2*pad;
+  const tray=Math.max(H*.6,size*1.7);
+  bx=Math.round((TW-W)/2);by=16;TH=Math.round(by+H+16+tray);
+  table.style.height=TH+'px';
+  Object.assign(board.style,{left:bx+'px',top:by+'px',width:W+'px',height:H+'px'});
+  board.style.setProperty('--img','url("'+imgURL+'")');
+  const Hs=[],Vs=[];
+  for(let r=0;r<=rows;r++){Hs[r]=[];Vs[r]=[];for(let c=0;c<=cols;c++){Hs[r][c]=Math.random()<.5?1:-1;Vs[r][c]=Math.random()<.5?1:-1}}
+  total=cols*rows;placed=0;
+  for(let r=0;r<rows;r++)for(let c=0;c<cols;c++){
+    const el=makePiece(c,r,Hs,Vs);
+    const w=pw+2*pad,h=ph+2*pad;
+    el._x=Math.random()*(TW-w);
+    el._y=by+H+16+Math.random()*(tray-h);
+    el.style.left=el._x+'px';el.style.top=el._y+'px';el.style.zIndex=Math.floor(Math.random()*9)+2;
+    table.appendChild(el);
+  }
+  t0=Date.now();timer=setInterval(tick,500);tick();
+}
+
+function tick(){
+  const s=Math.floor((Date.now()-t0)/1000);
+  $('#time').textContent=String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0');
+  $('#cnt').textContent=placed+'/'+total;
+}
+
+function hit(e){
+  for(const el of document.elementsFromPoint(e.clientX,e.clientY)){
+    if(!el.classList||!el.classList.contains('pc')||el.classList.contains('ok'))continue;
+    const r=el.getBoundingClientRect();
+    if(el._g.isPointInPath(el._p,(e.clientX-r.left)*dpr,(e.clientY-r.top)*dpr))return el;
+  }
+  return null;
+}
+
+table.addEventListener('pointerdown',e=>{
+  const p=hit(e);if(!p)return;
+  drag=p;const r=p.getBoundingClientRect();ox=e.clientX-r.left;oy=e.clientY-r.top;
+  p.style.zIndex=++z;p.classList.add('lift');
+  try{p.setPointerCapture(e.pointerId)}catch(_){}
+  e.preventDefault();
+});
+table.addEventListener('pointermove',e=>{
+  if(!drag)return;
+  const tr=table.getBoundingClientRect(),w=pw+2*pad,h=ph+2*pad;
+  drag._x=Math.min(TW-w+pad,Math.max(-pad,e.clientX-tr.left-ox));
+  drag._y=Math.min(TH-h+pad,Math.max(-pad,e.clientY-tr.top-oy));
+  drag.style.left=drag._x+'px';drag.style.top=drag._y+'px';
+});
+function drop(){
+  if(!drag)return;
+  const p=drag;drag=null;p.classList.remove('lift');
+  const tx=bx+p._c*pw-pad,ty=by+p._r*ph-pad;
+  if(Math.hypot(p._x-tx,p._y-ty)<Math.min(pw,ph)*.3){
+    p.style.left=tx+'px';p.style.top=ty+'px';p.classList.add('ok');p.style.zIndex=1;
+    placed++;tick();
+    if(placed===total)win();
+  }
+}
+table.addEventListener('pointerup',drop);
+table.addEventListener('pointercancel',drop);
+
+function win(){
+  clearInterval(timer);
+  $('#wt').textContent='เก่งมาก! ใช้เวลาไป '+$('#time').textContent+' นาที';
+  if(curStg < STAGES.length - 1){
+    $('#win-title').textContent = '🎉 ผ่านด่านที่ ' + (curStg + 1) + '!';
+    $('#again').textContent = 'ไปด่านถัดไป ➔';
+  } else {
+    $('#win-title').textContent = '🏆 ยินดีด้วย คุณเล่นครบทุกด่านแล้ว!';
+    $('#again').textContent = '🔄 เริ่มเล่นใหม่อีกครั้ง';
+  }
+  setTimeout(()=>{$('#win').hidden=false;$('#again').focus()},500);
+}
+
+function loadStage(idx){
+  curStg = idx;
+  const img = new Image();
+  img.onload = () => {
+    setSource(img);
+    imgURL = src.toDataURL('image/jpeg',.8);
+    build();
+  };
+  img.src = STAGES[curStg].img;
+}
+
+$('#shuf').addEventListener('click', build);
+$('#pv').addEventListener('click', e => {
+  const on = board.classList.toggle('peek');
+  e.currentTarget.setAttribute('aria-pressed', on);
+});
+$('#again').addEventListener('click', () => {
+  if(curStg < STAGES.length - 1){
+    loadStage(curStg + 1);
+  } else {
+    loadStage(0);
+  }
+});
+
+// เริ่มเล่นด่านแรก
+loadStage(0);
+</script>
+</body>
+</html>
